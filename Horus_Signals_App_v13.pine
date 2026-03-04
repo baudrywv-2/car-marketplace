@@ -1,0 +1,533 @@
+//@version=6
+indicator("🔱#6.1. Horus_Signals_App_v.13", overlay = true, max_boxes_count = 500, max_lines_count = 500, max_labels_count = 500)
+
+// INPUT GROUPS
+grp_zones   = "1. Session Zones (background boxes)"
+grp_signals = "2. ⚔ / 🔱 Signals"
+grp_range   = "3. Signal Range Zone (risk box)"
+grp_sl_tp   = "4. Stop Loss & Take Profit"
+grp_filters = "5. Filters (VuM / Links / VWAP)"
+grp_time    = "6. Time Filter (session window)"
+grp_candle  = "7. Candle Index (per day/week)"
+
+grp_tp_style = "8. TP Style"
+// SESSION ZONES
+show_zone_boxes = input.bool(true, "Show session background zones", group = grp_zones)
+tf_opt = input.timeframe("60", "Applied timeframe (higher than chart)", options = ["1", "5", "15", "30", "60", "240", "D", "W", "M"], group = grp_zones)
+zone_height = input.float(5.0, "Zone min height (price)", minval = 0.0001, step = 0.1, group = grp_zones)
+box_extend_bars = input.int(1, "Extend zone right (bars)", minval = 0, maxval = 50, group = grp_zones)
+show_bullish = input.bool(true, "  └ Bullish zones (below open)", group = grp_zones)
+show_bearish = input.bool(true, "  └ Bearish zones (above open)", group = grp_zones)
+bull_color = input.color(color.new(color.green, 75), "Bullish zone color", group = grp_zones)
+bear_color = input.color(color.new(color.red, 75), "Bearish zone color", group = grp_zones)
+border_width = input.int(1, "Zone border width", minval = 0, maxval = 4, group = grp_zones)
+show_open_line = input.bool(true, "Show opening price line", group = grp_zones)
+show_zone_range = input.bool(true, "Show zone range (pips/points) on boxes", group = grp_zones)
+max_zones_display = input.int(100, "Max zones on chart", minval = 10, maxval = 500, group = grp_zones)
+auto_cleanup = input.bool(true, "Auto-clean old zones", group = grp_zones)
+show_debug = input.bool(false, "Show debug info", group = grp_zones)
+// SIGNALS
+show_signals = input.bool(true, "Show ⚔ / 🔱 signals", group = grp_signals)
+signal_bias = input.string("Both", "Signal bias", options = ["Both", "Bullish only (⚔)", "Bearish only (🔱)"], group = grp_signals)
+signal_style = input.string("Diamond", "Signal shape", options = ["Diamond", "Arrow", "Triangle", "Circle"], group = grp_signals)
+show_signal_label = input.bool(true, "Show ⚔/🔱 badge on signal", group = grp_signals)
+sig_bull_color = input.color(color.new(#00897B, 0), "⚔ (bullish) color", group = grp_signals)
+sig_bear_color = input.color(color.new(#C62828, 0), "🔱 (bearish) color", group = grp_signals)
+consecutiveBars = input.int(3, "Min consecutive bars before signal", minval = 1, group = grp_signals)
+bullishOnlyBelowOpen = input.bool(false, "⚔ only when price below open line", group = grp_signals)
+bullishStrictBelow = input.bool(true, "  └ ⚔ strict: candle high < open", group = grp_signals)
+bearishOnlyAboveOpen = input.bool(false, "🔱 only when price above open line", group = grp_signals)
+bearishStrictAbove = input.bool(true, "  └ 🔱 strict: candle low > open", group = grp_signals)
+// RANGE ZONE
+show_signal_range = input.bool(true, "Show range zone (risk box)", group = grp_range)
+show_range_box_bull = input.bool(true, "  └ ⚔ Bullish range box", group = grp_range)
+show_range_box_bear = input.bool(true, "  └ 🔱 Bearish range box", group = grp_range)
+signal_range_mode = input.string("Risk zone (Close→SL)", "Range mode", options = ["Risk zone (Close→SL)", "Candle body (Low/High→Close)"], group = grp_range)
+show_range_value = input.bool(true, "Show range size (pips/points)", group = grp_range)
+range_value_format = input.string("Pips", "Range value format", options = ["Pips", "Points", "Both"], group = grp_range)
+signal_range_extend = input.int(2, "Range box extend right (bars)", minval = 0, maxval = 10, group = grp_range)
+max_signal_range_boxes = input.int(50, "Max SL range boxes on chart", minval = 1, maxval = 100, group = grp_range)
+// FILTERS (VuM / Links / VWAP)
+filterByHorusVM   = input.bool(false, "VuM │ Filter by Buy/Sell cycle", group = grp_filters)
+filterByLinks     = input.bool(false, "Links │ Filter by trend", group = grp_filters)
+links_stop_src    = input.source(close, "Links │ Source price", group = grp_filters)
+links_length      = input.int(12, "Links │ BB length", minval = 1, group = grp_filters)
+links_mult        = input.float(1.2, "Links │ BB multiplier", minval = 0.001, maxval = 50, group = grp_filters)
+links_risk_mult   = input.float(1.0, "Links │ Risk multiplier", minval = 0.001, maxval = 50, group = grp_filters)
+filterByVWAP      = input.bool(false, "VWAP │ Filter by level", group = grp_filters)
+vwap_anchor       = input.string("D", "VWAP │ Reset period", options = ["D", "W", "M"], group = grp_filters)
+vwap_filter_level = input.string("VWAP", "VWAP │ Signal filter level", options = ["VWAP", "Band 1", "Band 2", "Band 3", "Band 4", "Band 5"], group = grp_filters)
+limitOutsideBand1 = input.bool(true, "VWAP │ Limit signals outside Band 1", group = grp_filters)
+maxSignalsOutside = input.int(2, "VWAP │ Max signals outside B1", minval = 1, maxval = 10, group = grp_filters)
+// STOP LOSS & TAKE PROFIT
+show_stop_loss   = input.bool(true, "SL │ Show stop loss levels", group = grp_sl_tp)
+sl_method        = input.string("Signal Candle", "SL │ Method", options = ["Signal Candle", "Zone Boundary", "ATR", "Open Line"], group = grp_sl_tp)
+sl_buffer_atr    = input.float(0.0, "SL │ Buffer (ATR×)", minval = 0.0, maxval = 3.0, step = 0.1, group = grp_sl_tp)
+atr_length       = input.int(14, "SL │ ATR length (for method/buffer)", minval = 1, group = grp_sl_tp)
+atr_mult         = input.float(1.5, "SL │ ATR multiplier", minval = 0.1, maxval = 5.0, step = 0.1, group = grp_sl_tp)
+sl_show_as       = input.string("Line", "SL │ Display as", options = ["Line", "Label"], group = grp_sl_tp)
+sl_extend_bars   = input.int(20, "SL │ Line extend right (bars)", minval = 1, maxval = 100, group = grp_sl_tp)
+max_sl_objects   = input.int(50, "SL │ Max levels on chart", minval = 1, maxval = 200, group = grp_sl_tp)
+show_tp_boxes    = input.bool(false, "TP │ Show TP projection boxes", group = grp_sl_tp)
+tp_boxes_count   = input.int(2, "TP │ Number of TP boxes (1–5)", minval = 1, maxval = 5, group = grp_sl_tp)
+show_tp_labels   = input.bool(true, "TP │ Show TP1, TP2… labels", group = grp_sl_tp)
+tp1_color = input.color(color.new(#4CAF50, 20), "TP │ TP1 color", group = grp_tp_style)
+tp2_color = input.color(color.new(#8BC34A, 20), "TP │ TP2 color", group = grp_tp_style)
+tp3_color = input.color(color.new(#CDDC39, 20), "TP │ TP3 color", group = grp_tp_style)
+tp4_color = input.color(color.new(#FFEB3B, 20), "TP │ TP4 color", group = grp_tp_style)
+tp5_color = input.color(color.new(#FFC107, 20), "TP │ TP5 color", group = grp_tp_style)
+// TIME FILTER
+use_time_filter   = input.bool(false, "Enable time filter", group = grp_time)
+time_preset       = input.string("Custom", "Session preset", options = ["Custom", "Asian (00:00–08:00)", "London (07:00–16:00)", "New York (12:00–21:00)", "LDN+NY Overlap (12:00–16:00)"], group = grp_time)
+custom_start_hour = input.int(8,  "Custom start hour (0–23)", minval = 0, maxval = 23, group = grp_time)
+custom_start_min  = input.int(0,  "Custom start minute", minval = 0, maxval = 59, group = grp_time)
+custom_end_hour   = input.int(17, "Custom end hour (0–23)", minval = 0, maxval = 23, group = grp_time)
+custom_end_min    = input.int(0,  "Custom end minute", minval = 0, maxval = 59, group = grp_time)
+time_tz           = input.string("Exchange", "Timezone", options = ["Exchange", "UTC", "America/New_York", "America/Chicago", "Europe/London", "Europe/Berlin", "Asia/Tokyo", "Asia/Shanghai", "Asia/Kolkata", "Australia/Sydney"], group = grp_time)
+filter_zones      = input.bool(true, "Apply to session zones", group = grp_time)
+filter_signals    = input.bool(true, "Apply to ⚔ / 🔱 signals", group = grp_time)
+show_session_bg   = input.bool(false, "Highlight time window on chart", group = grp_time)
+session_bg_color  = input.color(color.new(#2962FF, 93), "Time window highlight color", group = grp_time)
+// CANDLE INDEX
+show_candle_index  = input.bool(false, "Show candle index per period", group = grp_candle)
+ci_period_type     = input.string("Day", "Count from", options = ["Day", "Week", "4H (Day-based)"], group = grp_candle)
+ci_show_from       = input.int(1, "Show from candle #", minval = 1, group = grp_candle)
+ci_show_to         = input.int(6, "Show to candle #", minval = 1, group = grp_candle)
+ci_label_pos       = input.string("Above", "Label position", options = ["Above", "Below"], group = grp_candle)
+ci_max_labels      = input.int(60, "Max labels on chart", minval = 10, maxval = 200, group = grp_candle)
+
+// Pip size: std forex 0.0001, JPY 0.01, coarse (indices/commodities) = mintick
+pip_size = syminfo.mintick >= 0.01 ? syminfo.mintick : (syminfo.mintick >= 0.001 ? 0.01 : 0.0001)
+f_range_txt(float rng) =>
+    pts = math.round(rng / syminfo.mintick)
+    pips_val = rng / pip_size
+    pips_rnd = pips_val >= 10 ? math.round(pips_val) : math.round(pips_val * 10) / 10
+    range_value_format == "Pips"   ? str.tostring(pips_rnd) + " pips" :
+     range_value_format == "Points" ? str.tostring(pts) + " pts" :
+     str.tostring(pips_rnd) + " pips / " + str.tostring(pts) + " pts"
+
+// TIMEFRAME GUARD
+tf_in_seconds    = timeframe.in_seconds(tf_opt)
+chart_in_seconds = timeframe.in_seconds()
+tf_valid         = tf_in_seconds > chart_in_seconds
+
+var label tf_warn_label = na
+if not tf_valid and barstate.islast
+    label.delete(tf_warn_label)
+    tf_warn_label := label.new(bar_index, high, "⚠ Selected TF (" + tf_opt + ") must be higher than chart TF", style = label.style_label_lower_left, size = size.normal, color = color.red, textcolor = color.white)
+f_pad(int val) =>
+    val < 10 ? "0" + str.tostring(val) : str.tostring(val)
+
+session_str = switch time_preset
+    "Asian (00:00–08:00)"           => "0000-0800"
+    "London (07:00–16:00)"          => "0700-1600"
+    "New York (12:00–21:00)"        => "1200-2100"
+    "LDN+NY Overlap (12:00–16:00)"  => "1200-1600"
+    => f_pad(custom_start_hour) + f_pad(custom_start_min) + "-" + f_pad(custom_end_hour) + f_pad(custom_end_min)
+
+tz_str = time_tz == "Exchange" ? syminfo.timezone : time_tz == "UTC" ? "Etc/UTC" : time_tz
+
+in_session         = use_time_filter ? not na(time(timeframe.period, session_str, tz_str)) : true
+in_session_zones   = filter_zones   ? in_session : true
+in_session_signals = filter_signals ? in_session : true
+
+[tf_prev_open, tf_prev_close, tf_prev_high, tf_prev_low, tf_curr_open, tf_curr_close, tf_curr_high, tf_curr_low, tf_time] = request.security(syminfo.tickerid, tf_opt, [open[1], close[1], high[1], low[1], open, close, high, low, time], barmerge.gaps_off, barmerge.lookahead_off)
+
+new_tf_bar     = ta.change(tf_time) != 0
+tf_duration_ms = tf_in_seconds * 1000
+extend_ms      = box_extend_bars * chart_in_seconds * 1000
+
+var float draw_open = na
+var float draw_close = na
+if new_tf_bar and bar_index > 1
+    draw_open  := tf_prev_open
+    draw_close := tf_prev_close
+
+is_bullish = not na(draw_close) and not na(draw_open) and draw_close > draw_open
+is_bearish = not na(draw_close) and not na(draw_open) and draw_close < draw_open
+
+var box[]  bullish_boxes = array.new_box()
+var box[]  bearish_boxes = array.new_box()
+var line[] open_lines    = array.new_line()
+
+cleanup_old_objects() =>
+    if auto_cleanup
+        while array.size(bullish_boxes) > max_zones_display
+            box.delete(array.shift(bullish_boxes))
+        while array.size(bearish_boxes) > max_zones_display
+            box.delete(array.shift(bearish_boxes))
+        while array.size(open_lines) > max_zones_display
+            line.delete(array.shift(open_lines))
+
+// SEPARATE: Zone boxes, open lines, and SL boxes are independent - each has its own array
+// Open line is drawn per zone but stored in open_lines; zone boxes in bullish_boxes/bearish_boxes
+// SL lines/boxes are in sl_lines/sl_labels - fully separate
+
+var box  current_zone_box  = na
+var line current_zone_line = na
+
+if not show_zone_boxes
+    if not na(current_zone_box)
+        box.delete(current_zone_box)
+        current_zone_box := na
+    if not na(current_zone_line)
+        line.delete(current_zone_line)
+        current_zone_line := na
+
+if new_tf_bar and tf_valid and show_zone_boxes
+    if not na(current_zone_box) and bar_index > 1
+        final_open = tf_prev_open
+        keep_zone = (is_bullish and show_bullish) or (is_bearish and show_bearish)
+
+        if keep_zone and show_open_line and not na(current_zone_line)
+            line.set_xy1(current_zone_line, box.get_left(current_zone_box), final_open)
+            line.set_xy2(current_zone_line, box.get_right(current_zone_box), final_open)
+            array.push(open_lines, current_zone_line)
+        else if not na(current_zone_line)
+            line.delete(current_zone_line)
+
+        if is_bullish and show_bullish
+            box.set_top(current_zone_box, final_open)
+            box.set_bottom(current_zone_box, math.min(final_open - zone_height, not na(tf_prev_low) ? tf_prev_low : final_open - zone_height))
+            box.set_border_color(current_zone_box, color.green)
+            box.set_bgcolor(current_zone_box, bull_color)
+            array.push(bullish_boxes, current_zone_box)
+        else if is_bearish and show_bearish
+            box.set_top(current_zone_box, math.max(final_open + zone_height, not na(tf_prev_high) ? tf_prev_high : final_open + zone_height))
+            box.set_bottom(current_zone_box, final_open)
+            box.set_border_color(current_zone_box, color.red)
+            box.set_bgcolor(current_zone_box, bear_color)
+            array.push(bearish_boxes, current_zone_box)
+        else
+            box.delete(current_zone_box)
+
+        cleanup_old_objects()
+        current_zone_box  := na
+        current_zone_line := na
+
+    if not na(tf_curr_open) and tf_curr_open != 0.0 and not na(tf_time) and in_session_zones
+        t_left  = int(tf_time)
+        t_right = int(tf_time + tf_duration_ms + extend_ms)
+        if show_open_line
+            current_zone_line := line.new(t_left, tf_curr_open, t_right, tf_curr_open, xloc = xloc.bar_time, extend = extend.none, color = color.blue, width = 2)
+        else
+            current_zone_line := na
+        current_zone_box := box.new(t_left, tf_curr_open, t_right, tf_curr_open - zone_height, xloc = xloc.bar_time, border_color = color.gray, border_width = border_width, bgcolor = color.new(color.gray, 85))
+        cleanup_old_objects()
+
+if show_zone_boxes and not na(current_zone_box)
+    curr_open = tf_curr_open
+    if not na(current_zone_line)
+        line.set_xy1(current_zone_line, box.get_left(current_zone_box), curr_open)
+        line.set_xy2(current_zone_line, box.get_right(current_zone_box), curr_open)
+    if not na(tf_curr_close) and not na(curr_open)
+        if tf_curr_close > curr_open and show_bullish
+            box.set_top(current_zone_box, curr_open)
+            box.set_bottom(current_zone_box, math.min(curr_open - zone_height, not na(tf_curr_low) ? tf_curr_low : curr_open - zone_height))
+            box.set_border_color(current_zone_box, color.green)
+            box.set_bgcolor(current_zone_box, bull_color)
+        else if tf_curr_close < curr_open and show_bearish
+            box.set_top(current_zone_box, math.max(curr_open + zone_height, not na(tf_curr_high) ? tf_curr_high : curr_open + zone_height))
+            box.set_bottom(current_zone_box, curr_open)
+            box.set_border_color(current_zone_box, color.red)
+            box.set_bgcolor(current_zone_box, bear_color)
+
+var label debug_label = na
+if show_zone_boxes and show_debug and barstate.islast
+    label.delete(debug_label)
+    total_objects = array.size(bullish_boxes) + array.size(bearish_boxes) + array.size(open_lines)
+    txt = "Zone: " + str.tostring(zone_height) + " | Objs: " + str.tostring(total_objects) + "/500" + (use_time_filter ? " | Session: " + session_str : "") + (not tf_valid ? " | ⚠ TF INVALID" : "")
+    debug_label := label.new(bar_index, high, txt, style = label.style_label_lower_right, size = size.small, color = color.new(color.gray, 50), textcolor = color.white)
+
+var label[] zone_labels = array.new_label()
+var label[] zone_range_labels = array.new_label()
+if show_zone_boxes and barstate.islast
+    while array.size(zone_labels) > 0
+        label.delete(array.shift(zone_labels))
+    while array.size(zone_range_labels) > 0
+        label.delete(array.shift(zone_range_labels))
+    label_center_offset = math.floor(tf_duration_ms / 2.0)
+    bull_count = array.size(bullish_boxes)
+    bull_start = math.max(0, bull_count - 5)
+    for i = bull_start to bull_count - 1
+        current_box = array.get(bullish_boxes, i)
+        box_top  = box.get_top(current_box)
+        box_bot  = box.get_bottom(current_box)
+        box_left = box.get_left(current_box)
+        array.push(zone_labels, label.new(box_left + label_center_offset, box_top, "BUY ZONE", xloc = xloc.bar_time, yloc = yloc.price, color = color.green, textcolor = color.white, size = size.tiny, style = label.style_label_down))
+        if show_zone_range
+            zone_rng = box_top - box_bot
+            array.push(zone_range_labels, label.new(box_left + label_center_offset, (box_top + box_bot) / 2, f_range_txt(zone_rng), xloc = xloc.bar_time, yloc = yloc.price, style = label.style_label_center, color = color.new(color.green, 40), textcolor = color.white, size = size.tiny))
+    bear_count = array.size(bearish_boxes)
+    bear_start = math.max(0, bear_count - 5)
+    for i = bear_start to bear_count - 1
+        current_box = array.get(bearish_boxes, i)
+        box_bottom = box.get_bottom(current_box)
+        box_top    = box.get_top(current_box)
+        box_left   = box.get_left(current_box)
+        array.push(zone_labels, label.new(box_left + label_center_offset, box_bottom, "SELL ZONE", xloc = xloc.bar_time, yloc = yloc.price, color = color.red, textcolor = color.white, size = size.tiny, style = label.style_label_up))
+        if show_zone_range
+            zone_rng = box_top - box_bottom
+            array.push(zone_range_labels, label.new(box_left + label_center_offset, (box_top + box_bottom) / 2, f_range_txt(zone_rng), xloc = xloc.bar_time, yloc = yloc.price, style = label.style_label_center, color = color.new(color.red, 40), textcolor = color.white, size = size.tiny))
+
+wtChannelLen = 9
+wtAverageLen = 12
+wtMALen      = 3
+obLevel2     = 60.0
+osLevel2     = -60.0
+wtSrc        = hlc3
+esa          = ta.ema(wtSrc, wtChannelLen)
+de           = ta.ema(math.abs(wtSrc - esa), wtChannelLen)
+ci           = (wtSrc - esa) / math.max(0.015 * de, 1e-10)
+wt1          = ta.ema(ci, wtAverageLen)
+wt2          = ta.sma(wt1, wtMALen)
+wtCross      = ta.cross(wt1, wt2)
+wtCrossUp    = wt2 - wt1 < 0
+wtCrossDown  = wt2 - wt1 > 0
+vumBuyCondition  = wt2 <= osLevel2 and wtCross and wtCrossUp
+vumSellCondition = wt2 >= obLevel2 and wtCross and wtCrossDown
+
+var int vmState = 0
+if vumBuyCondition
+    vmState := 1
+else if vumSellCondition
+    vmState := -1
+
+links_basis  = ta.sma(close, links_length)
+links_dev    = links_mult * ta.stdev(close, links_length)
+links_upper  = links_basis + links_dev
+links_lower  = links_basis - links_dev
+
+var float links_smin = na
+var float links_smax = na
+var float links_adj_min = na
+var float links_adj_max = na
+var int links_trend = 1
+
+links_trend := na(links_trend[1]) ? 1 : links_stop_src > links_upper[1] ? +1 : links_stop_src < links_lower[1] ? -1 : links_trend[1]
+links_smin := links_trend < 0 ? math.min(nz(links_smin[1], links_upper[1]), links_upper) : na
+links_smax := links_trend > 0 ? math.max(nz(links_smax[1], links_lower[1]), links_lower) : na
+links_adj_min := links_trend < 0 ? math.min(nz(links_adj_min[1], links_smin), links_smin - links_risk_mult * links_dev) : na
+links_adj_max := links_trend > 0 ? math.max(nz(links_adj_max[1], links_smax), links_smax + links_risk_mult * links_dev) : na
+
+links_buy_entry_zone  = not na(links_adj_max) and not na(links_smax) and links_stop_src < links_adj_max and links_stop_src > links_smax
+links_sell_entry_zone = not na(links_adj_min) and not na(links_smin) and links_stop_src > links_adj_min and links_stop_src < links_smin
+
+vwap_new_session = ta.change(time(vwap_anchor)) != 0
+
+var float vwapsum   = 0.0
+var float volumesum = 0.0
+var float v2sum     = 0.0
+
+vwapsum   := vwap_new_session ? hl2 * volume : vwapsum + hl2 * volume
+volumesum := vwap_new_session ? volume        : volumesum + volume
+v2sum     := vwap_new_session ? volume * hl2 * hl2 : v2sum + volume * hl2 * hl2
+
+vwap_valid = volumesum > 0
+myvwap   = vwap_valid ? vwapsum / volumesum : na
+dev_vwap = vwap_valid ? math.sqrt(math.max(v2sum / volumesum - myvwap * myvwap, 0)) : 0.0
+
+upper1 = vwap_valid ? myvwap + 1.28 * dev_vwap : na
+lower1 = vwap_valid ? myvwap - 1.28 * dev_vwap : na
+upper2 = vwap_valid ? myvwap + 2.01 * dev_vwap : na
+lower2 = vwap_valid ? myvwap - 2.01 * dev_vwap : na
+upper3 = vwap_valid ? myvwap + 2.51 * dev_vwap : na
+lower3 = vwap_valid ? myvwap - 2.51 * dev_vwap : na
+upper4 = vwap_valid ? myvwap + 3.09 * dev_vwap : na
+lower4 = vwap_valid ? myvwap - 3.09 * dev_vwap : na
+upper5 = vwap_valid ? myvwap + 4.01 * dev_vwap : na
+lower5 = vwap_valid ? myvwap - 4.01 * dev_vwap : na
+
+vwap_upper_threshold = switch vwap_filter_level
+    "VWAP"   => myvwap
+    "Band 1" => upper1
+    "Band 2" => upper2
+    "Band 3" => upper3
+    "Band 4" => upper4
+    "Band 5" => upper5
+    => myvwap
+
+vwap_lower_threshold = switch vwap_filter_level
+    "VWAP"   => myvwap
+    "Band 1" => lower1
+    "Band 2" => lower2
+    "Band 3" => lower3
+    "Band 4" => lower4
+    "Band 5" => lower5
+    => myvwap
+
+isGreen = close > open
+isRed   = close < open
+consecutiveRed   = ta.barssince(isGreen[1]) >= consecutiveBars
+consecutiveGreen = ta.barssince(isRed[1])   >= consecutiveBars
+firstGreenDay    = isGreen and consecutiveRed
+firstRedDay      = isRed   and consecutiveGreen
+
+openLine = tf_curr_open
+tf_ok_for_signals = (bullishOnlyBelowOpen or bearishOnlyAboveOpen) ? tf_valid : true
+
+bullishPassOpen = bullishOnlyBelowOpen ? (firstGreenDay and not na(openLine) and open < openLine and (not bullishStrictBelow or high < openLine)) : firstGreenDay
+bearishPassOpen = bearishOnlyAboveOpen ? (firstRedDay and not na(openLine) and open > openLine and (not bearishStrictAbove or low > openLine)) : firstRedDay
+
+bullishRaw      = bullishPassOpen and (not filterByHorusVM or vmState == 1) and (not filterByLinks or links_trend == 1) and (not filterByVWAP or not vwap_valid or close < vwap_lower_threshold) and in_session_signals and tf_ok_for_signals
+
+bearishRaw      = bearishPassOpen and (not filterByHorusVM or vmState == -1) and (not filterByLinks or links_trend == -1) and (not filterByVWAP or not vwap_valid or close > vwap_upper_threshold) and in_session_signals and tf_ok_for_signals
+
+bull_outside_b1 = vwap_valid and not na(lower1) and close < lower1
+bear_outside_b1 = vwap_valid and not na(upper1) and close > upper1
+inside_band1    = not vwap_valid or (not na(lower1) and not na(upper1) and close >= lower1 and close <= upper1)
+
+var int bull_cnt_outside = 0
+var int bear_cnt_outside = 0
+
+if inside_band1
+    bull_cnt_outside := 0
+    bear_cnt_outside := 0
+
+bullishSignalRaw = bullishRaw and (not filterByVWAP or not limitOutsideBand1 or not bull_outside_b1 or bull_cnt_outside < maxSignalsOutside)
+bearishSignalRaw = bearishRaw and (not filterByVWAP or not limitOutsideBand1 or not bear_outside_b1 or bear_cnt_outside < maxSignalsOutside)
+
+if bullishSignalRaw and bull_outside_b1
+    bull_cnt_outside += 1
+if bearishSignalRaw and bear_outside_b1
+    bear_cnt_outside += 1
+
+// Bias filter: apply after all other filters
+bullishSignal = bullishSignalRaw and (signal_bias == "Both" or signal_bias == "Bullish only (⚔)")
+bearishSignal = bearishSignalRaw and (signal_bias == "Both" or signal_bias == "Bearish only (🔱)")
+
+sig_shape_bull = signal_style == "Diamond" ? shape.diamond : signal_style == "Arrow" ? shape.arrowup  : signal_style == "Circle" ? shape.circle : shape.triangleup
+sig_shape_bear = signal_style == "Diamond" ? shape.diamond : signal_style == "Arrow" ? shape.arrowdown : signal_style == "Circle" ? shape.circle : shape.triangledown
+plotshape(show_signals and bullishSignal, style = sig_shape_bull, location = location.belowbar, color = sig_bull_color, size = size.small, title = "⚔")
+plotshape(show_signals and bearishSignal, style = sig_shape_bear, location = location.abovebar, color = sig_bear_color, size = size.small, title = "🔱")
+
+var label[] bull_lbls = array.new_label()
+var label[] bear_lbls = array.new_label()
+if show_signals and show_signal_label and bullishSignal
+    lb = label.new(bar_index, low, "⚔", style = label.style_label_up, color = sig_bull_color, textcolor = color.white, size = size.tiny)
+    array.push(bull_lbls, lb)
+    while array.size(bull_lbls) > 50
+        label.delete(array.shift(bull_lbls))
+if show_signals and show_signal_label and bearishSignal
+    lb = label.new(bar_index, high, "🔱", style = label.style_label_down, color = sig_bear_color, textcolor = color.white, size = size.tiny)
+    array.push(bear_lbls, lb)
+    while array.size(bear_lbls) > 50
+        label.delete(array.shift(bear_lbls))
+
+atr_val      = ta.atr(atr_length)
+buffer_dist  = sl_buffer_atr * atr_val
+sl_extend_ms = sl_extend_bars * chart_in_seconds * 1000
+
+zone_bull_bottom = not na(current_zone_box) and show_bullish ? math.min(tf_curr_open - zone_height, nz(tf_curr_low, tf_curr_open - zone_height)) : na
+zone_bear_top    = not na(current_zone_box) and show_bearish ? math.max(tf_curr_open + zone_height, nz(tf_curr_high, tf_curr_open + zone_height)) : na
+
+sl_bull = switch sl_method
+    "Signal Candle" => low - buffer_dist
+    "Zone Boundary" => nz(zone_bull_bottom, low - buffer_dist)
+    "ATR"           => low - atr_mult * atr_val
+    "Open Line"     => nz(openLine, low)
+    => low - buffer_dist
+
+sl_bear = switch sl_method
+    "Signal Candle" => high + buffer_dist
+    "Zone Boundary" => nz(zone_bear_top, high + buffer_dist)
+    "ATR"           => high + atr_mult * atr_val
+    "Open Line"     => nz(openLine, high)
+    => high + buffer_dist
+
+var box[] sig_range_boxes = array.new_box()
+var label[] sig_range_labels = array.new_label()
+var box[] sig_tp_boxes  = array.new_box()
+var label[] sig_tp_labels = array.new_label()
+sig_confirmed = barstate.isconfirmed
+
+if show_signals and show_signal_range and sig_confirmed
+    t_left        = time
+    t_right       = time + (1 + signal_range_extend) * chart_in_seconds * 1000
+    t_mid         = (t_left + t_right) / 2
+    use_risk_zone = signal_range_mode == "Risk zone (Close→SL)"
+    tp_colors     = array.from(tp1_color, tp2_color, tp3_color, tp4_color, tp5_color)
+    if bullishSignal and show_range_box_bull
+        float box_top = use_risk_zone ? math.max(close, sl_bull) : close
+        float box_bot = use_risk_zone ? math.min(close, sl_bull) : low
+        b = box.new(t_left, box_top, t_right, box_bot, xloc = xloc.bar_time, border_color = color.new(sig_bull_color, 50), border_width = 1, bgcolor = color.new(sig_bull_color, 80))
+        array.push(sig_range_boxes, b)
+        if show_range_value
+            array.push(sig_range_labels, label.new(t_mid, (box_top + box_bot) / 2, f_range_txt(box_top - box_bot), xloc = xloc.bar_time, yloc = yloc.price, style = label.style_label_center, color = color.new(sig_bull_color, 20), textcolor = color.white, size = size.small))
+        if show_tp_boxes and tp_boxes_count >= 1
+            range_h = box_top - box_bot
+            for i = 1 to tp_boxes_count
+                tp_col  = array.get(tp_colors, i - 1)
+                tp_top  = box_top + i * range_h
+                tp_bot  = box_top + (i - 1) * range_h
+                array.push(sig_tp_boxes, box.new(t_left, tp_top, t_right, tp_bot, xloc = xloc.bar_time, border_color = color.new(tp_col, 30), border_width = 1, bgcolor = color.new(tp_col, 75)))
+                if show_tp_labels
+                    array.push(sig_tp_labels, label.new(t_mid, (tp_top + tp_bot) / 2, "TP" + str.tostring(i), xloc = xloc.bar_time, yloc = yloc.price, style = label.style_label_center, color = color.new(tp_col, 10), textcolor = color.white, size = size.tiny))
+    if bearishSignal and show_range_box_bear
+        float box_top = use_risk_zone ? math.max(sl_bear, close) : high
+        float box_bot = use_risk_zone ? math.min(sl_bear, close) : close
+        b = box.new(t_left, box_top, t_right, box_bot, xloc = xloc.bar_time, border_color = color.new(sig_bear_color, 50), border_width = 1, bgcolor = color.new(sig_bear_color, 80))
+        array.push(sig_range_boxes, b)
+        if show_range_value
+            array.push(sig_range_labels, label.new(t_mid, (box_top + box_bot) / 2, f_range_txt(box_top - box_bot), xloc = xloc.bar_time, yloc = yloc.price, style = label.style_label_center, color = color.new(sig_bear_color, 20), textcolor = color.white, size = size.small))
+        if show_tp_boxes and tp_boxes_count >= 1
+            range_h = box_top - box_bot
+            for i = 1 to tp_boxes_count
+                tp_col  = array.get(tp_colors, i - 1)
+                tp_top  = box_bot - (i - 1) * range_h
+                tp_bot  = box_bot - i * range_h
+                array.push(sig_tp_boxes, box.new(t_left, tp_top, t_right, tp_bot, xloc = xloc.bar_time, border_color = color.new(tp_col, 30), border_width = 1, bgcolor = color.new(tp_col, 75)))
+                if show_tp_labels
+                    array.push(sig_tp_labels, label.new(t_mid, (tp_top + tp_bot) / 2, "TP" + str.tostring(i), xloc = xloc.bar_time, yloc = yloc.price, style = label.style_label_center, color = color.new(tp_col, 10), textcolor = color.white, size = size.tiny))
+    while array.size(sig_range_boxes) > max_signal_range_boxes
+        box.delete(array.shift(sig_range_boxes))
+        if array.size(sig_range_labels) > 0
+            label.delete(array.shift(sig_range_labels))
+    max_tp_total = max_signal_range_boxes * math.max(tp_boxes_count, 1)
+    while array.size(sig_tp_boxes) > max_tp_total
+        box.delete(array.shift(sig_tp_boxes))
+        if array.size(sig_tp_labels) > 0
+            label.delete(array.shift(sig_tp_labels))
+
+var line[]   sl_lines   = array.new_line()
+var label[]  sl_labels  = array.new_label()
+
+if show_stop_loss and show_signals and sig_confirmed
+    t1 = time
+    t2 = time + sl_extend_ms
+    if bullishSignal
+        if sl_show_as == "Line"
+            array.push(sl_lines, line.new(t1, sl_bull, t2, sl_bull, xloc = xloc.bar_time, color = color.new(sig_bull_color, 30), width = 1))
+        else
+            array.push(sl_labels, label.new(bar_index, sl_bull, "SL: " + str.tostring(sl_bull, format.mintick), style = label.style_label_up, color = sig_bull_color, textcolor = color.white, size = size.tiny))
+    if bearishSignal
+        if sl_show_as == "Line"
+            array.push(sl_lines, line.new(t1, sl_bear, t2, sl_bear, xloc = xloc.bar_time, color = color.new(sig_bear_color, 30), width = 1))
+        else
+            array.push(sl_labels, label.new(bar_index, sl_bear, "SL: " + str.tostring(sl_bear, format.mintick), style = label.style_label_down, color = sig_bear_color, textcolor = color.white, size = size.tiny))
+    while array.size(sl_lines) > max_sl_objects
+        line.delete(array.shift(sl_lines))
+    while array.size(sl_labels) > max_sl_objects
+        label.delete(array.shift(sl_labels))
+
+ci_tf_change = ci_period_type == "Day" or ci_period_type == "4H (Day-based)" ? ta.change(time("D")) : ta.change(time("W"))
+ci_new_period = nz(ci_tf_change, 0) != 0
+
+var int ci_candle_index = 0
+if ci_new_period
+    ci_candle_index := 1
+else
+    ci_candle_index += 1
+
+ci_in_range = ci_candle_index >= ci_show_from and ci_candle_index <= ci_show_to
+ci_y_loc   = ci_label_pos == "Above" ? high : low
+ci_style   = ci_label_pos == "Above" ? label.style_label_down : label.style_label_up
+
+var label[] ci_labels = array.new_label()
+if show_candle_index and ci_in_range
+    lb = label.new(bar_index, ci_y_loc, str.tostring(ci_candle_index), style = ci_style, textcolor = color.white, color = color.black, size = size.small)
+    array.push(ci_labels, lb)
+    while array.size(ci_labels) > ci_max_labels
+        label.delete(array.shift(ci_labels))
+
+bgcolor(use_time_filter and show_session_bg and in_session ? session_bg_color : na, title = "Time window")
