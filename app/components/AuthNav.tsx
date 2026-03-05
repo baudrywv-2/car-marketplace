@@ -40,11 +40,13 @@ export default function AuthNav({ mobile, onNavigate }: Props) {
       .select("full_name")
       .eq("id", user.id)
       .single()
-      .then(({ data }) => {
-        const name = (data as { full_name?: string | null } | null)?.full_name;
-        setUserName(name && typeof name === "string" ? name.trim() : null);
-      })
-      .catch(() => setUserName(null));
+      .then(
+        ({ data }) => {
+          const name = (data as { full_name?: string | null } | null)?.full_name;
+          setUserName(name && typeof name === "string" ? name.trim() : null);
+        },
+        () => setUserName(null)
+      );
   }, [user]);
 
   useEffect(() => {
