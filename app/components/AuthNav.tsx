@@ -35,18 +35,23 @@ export default function AuthNav({ mobile, onNavigate }: Props) {
       setUserName(meta.full_name.trim() || null);
       return;
     }
-    supabase
-      .from("profiles")
-      .select("full_name")
-      .eq("id", user.id)
-      .single()
-      .then(
-        ({ data }) => {
+    let cancelled = false;
+    void (async () => {
+      try {
+        const { data } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", user.id)
+          .single();
+        if (!cancelled) {
           const name = (data as { full_name?: string | null } | null)?.full_name;
           setUserName(name && typeof name === "string" ? name.trim() : null);
-        },
-        () => setUserName(null)
-      );
+        }
+      } catch {
+        if (!cancelled) setUserName(null);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [user]);
 
   useEffect(() => {
